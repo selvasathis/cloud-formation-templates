@@ -1,0 +1,206 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "vpc with NAT gatway"
+Parameters:
+  vpccidr: 
+    Type: String
+    Default: 192.168.0.0/16
+    Description: vpc-cidr range 
+  pubsub01cidr:
+    Type: String
+    Default: 192.168.1.0/24
+    Description: public subnet 01 CidrBlock
+  pubsub02cidr:
+    Type: String
+    Default: 192.168.2.0/24
+    Description: public subnet 02 CidrBlock
+  pvtsub01cidr:
+    Type: String
+    Default: 192.168.4.0/24
+    Description: private subnet 01 CidrBlock
+  pvtsub02cidr:
+    Type: String
+    Default: 192.168.5.0/24
+    Description: private subnet 02 CidrBlock
+Resources:
+# create vpc
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Ref: vpccidr
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+       - Key: name
+         Value: !Sub '${AWS::StackName}-VPC'
+#create 2 public subnets
+  PublicSubnet01:
+    DependsOn:
+      - myVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 
+        Ref: pubsub01cidr
+      VpcId:
+        Ref: myVPC
+      Tags:
+        - Key: name
+          Value: !Sub '${AWS::StackName}-pubsub01'
+  PublicSubnet02:
+    DependsOn:
+      - myVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 
+        Ref: pubsub02cidr
+      VpcId: 
+        Ref: myVPC
+      Tags:
+        - Key: name
+          Value: !Sub '${AWS::StackName}-pubsub02'
+# create 2 private subnets
+  PrivateSubnet01:
+    DependsOn:
+      - myVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 
+        Ref: pvtsub01cidr
+      VpcId: 
+        Ref: myVPC
+      Tags:
+        - Key: name
+          Value: !Sub '${AWS::StackName}-pvtsub01'
+  PrivateSubnet02:
+    DependsOn:
+      - myVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 
+        Ref: pvtsub02cidr
+      VpcId: 
+        Ref: myVPC
+      Tags:
+        - Key: name
+          Value: !Sub '${AWS::StackName}-pvtsub02'
+#create pubRT and attach two public subnets in the same route table
+  publicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: myVPC
+      Tags:
+      - Key: name
+        Value: publicRT
+  publicsub01RTassociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: publicRouteTable
+      SubnetId: 
+        Ref: PublicSubnet01
+  publicsub02RTassociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: publicRouteTable
+      SubnetId: 
+        Ref: PublicSubnet02
+# create pvtRT01 and attach private subnet01
+  privateRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: myVPC
+      Tags:
+      - Key: name
+        Value: privateRouteTable01
+  privatesub01RTassociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: privateRouteTable01
+      SubnetId: 
+        Ref: PrivateSubnet01
+
+#create pvt RT and attach private subnet02
+  privateRouteTable02:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: myVPC
+      Tags:
+      - Key: name
+        Value: privateRouteTable02
+  privatesub02RTassociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: privateRouteTable02
+      SubnetId: 
+        Ref: PrivateSubnet02
+# create internet gateway and attach to vpc
+  myInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: name
+        Value: !Sub '${AWS::StackName}-IGW'
+  vpcigwattachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: 
+        Ref: myInternetGateway
+      VpcId: 
+        Ref: myVPC
+# create route for internet gateway in public route table
+  IGWroute:
+    DependsOn:
+      - vpcigwattachment
+      - publicRouteTable
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: 
+        Ref: myInternetGateway
+      RouteTableId: 
+        Ref: publicRouteTable
+# create NAT gateway with EIP
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId:
+        Ref: PublicSubnet01
+      Tags:
+      - Key: name
+        Value: !Sub '${AWS::StackName}-NGW'
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+# route NAT gateway in private route table 01
+  RouteNATGateway01:
+    DependsOn: 
+      - NATGateway
+      - privateRouteTable01
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: 
+        Ref: privateRouteTable01
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: 
+        Ref: NATGateway
+# route NAT gateway in private route table 02
+  RouteNATGateway02:
+    DependsOn: 
+      - NATGateway
+      - privateRouteTable02
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: 
+        Ref: privateRouteTable02
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: 
+        Ref: NATGateway
